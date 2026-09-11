@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+work/
+cookies.txt
+.pytest_cache/
