@@ -58,3 +58,63 @@ def necesita_escalar(receta: Receta) -> bool:
         or len(receta.ingredientes) < 2
         or len(receta.pasos) < 2
     )
+
+
+# --- Gastos ---------------------------------------------------------------
+#
+# Las categorías van como Literal, no como texto libre en el prompt: así el
+# esquema mismo le impide al modelo inventar una categoría que no exista en
+# Airtable. Si mañana agregas una opción allá, se agrega aquí y ya.
+
+CategoriaGasto = Literal[
+    "Renta consultorio",
+    "Servicios (luz/agua/internet)",
+    "Insumos y papelería",
+    "Equipo y mobiliario",
+    "Software y suscripciones",
+    "Publicidad y marketing",
+    "Sueldos y honorarios",
+    "Impuestos y contador",
+    "Cursos y educación continua",
+    "Transporte y viajes",
+    "Comida",
+    "Otros",
+]
+CiudadGasto = Literal["La Paz", "CDMX", "Ambas / General"]
+TipoGasto = Literal["Fijo", "Variable"]
+FormaPago = Literal["Efectivo", "Transferencia", "Tarjeta débito", "Tarjeta crédito"]
+
+
+class Gasto(BaseModel):
+    concepto: str = Field(description="Descripción breve del gasto, 2-5 palabras.")
+    monto: float = Field(description="Monto en pesos mexicanos, solo el número.")
+    fecha: str = Field(description="Fecha del gasto en formato YYYY-MM-DD.")
+    categoria: CategoriaGasto
+    ciudad: CiudadGasto
+    tipo: TipoGasto = Field(
+        description="'Fijo' si es un gasto recurrente (renta, sueldos, suscripciones); "
+        "'Variable' para todo lo demás."
+    )
+    forma_pago: FormaPago
+    deducible: bool = Field(
+        description="True si es un gasto del consultorio que normalmente se deduce."
+    )
+    notas: str | None = Field(description="Detalle que no cupo en el concepto. null si no hay.")
+    confianza: Confianza
+    falta: list[str] = Field(
+        description="Campos que tuviste que suponer porque no se dijeron. Lista vacía si todo venía."
+    )
+
+
+class LecturaGasto(BaseModel):
+    """Clasificación y extracción en una sola llamada, para no pagar dos."""
+
+    es_gasto: bool = Field(
+        description="True solo si el mensaje registra un gasto con un monto. "
+        "Una pregunta, un saludo o una nota suelta no son gastos."
+    )
+    gasto: Gasto | None = Field(description="El gasto extraído. null si es_gasto es False.")
+    respuesta: str | None = Field(
+        description="Si es_gasto es False, una frase breve diciendo qué entendiste "
+        "y qué te faltó. null si sí era un gasto."
+    )

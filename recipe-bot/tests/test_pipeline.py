@@ -61,6 +61,7 @@ def cfg(tmp_path):
         telegram_token="t", allowed_users=frozenset({1}),
         anthropic_model="claude-opus-5",
         airtable_token="a", airtable_base_id="appX", airtable_table="Recetas",
+        airtable_base_gastos="appG", airtable_tabla_gastos="Gastos",
         transcribe_base_url="https://x/v1", transcribe_api_key="", transcribe_model="whisper-1",
         work_dir=tmp_path, cookies_file=None, max_frames=16, frame_width=640,
     )

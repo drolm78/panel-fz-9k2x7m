@@ -16,7 +16,7 @@ import requests
 
 from .config import Config
 from .models import Receta
-from .pipeline.run import Procesador, Resultado
+from .pipeline.run import Procesador, Resultado, ResultadoGasto
 from .resolvers import ResolverError, extraer_url
 
 log = logging.getLogger(__name__)
@@ -25,10 +25,16 @@ LIMITE_TELEGRAM = 4096
 LIMITE_ARCHIVO_MB = 20  # tope de getFile para bots
 
 AYUDA = (
+    "Hago dos cosas:\n\n"
+    "RECETAS DE COCINA\n"
     "Mándame la liga de un video de YouTube, TikTok, Instagram o Facebook y te "
-    "regreso la receta ya guardada en Airtable.\n\n"
-    "Si el link no jala (Instagram y Facebook a veces bloquean), abre el video, "
-    "dale Compartir y mándame el archivo de video directo: funciona igual.\n\n"
+    "regreso la receta ya guardada en Airtable. Si el link no jala (Instagram y "
+    "Facebook a veces bloquean), comparte el archivo de video directo: funciona igual.\n\n"
+    "GASTOS\n"
+    "Dicta o escribe un gasto y lo registro:\n"
+    "  \"350 de gasolina, tarjeta Banorte, ayer\"\n"
+    "  \"1200 del tóner de la impresora del consultorio\"\n"
+    "Las notas de voz sirven igual que el texto.\n\n"
     "Comandos: /start, /help"
 )
 
@@ -122,6 +128,37 @@ def formatear(resultado: Resultado) -> str:
     return "\n".join(lineas)
 
 
+def _voz_del_mensaje(mensaje: dict) -> dict | None:
+    """Nota de voz (o un audio mandado como archivo)."""
+    if "voice" in mensaje:
+        return mensaje["voice"]
+    audio = mensaje.get("audio")
+    if audio:
+        return audio
+    doc = mensaje.get("document")
+    if doc and str(doc.get("mime_type", "")).startswith("audio/"):
+        return doc
+    return None
+
+
+def formatear_gasto(resultado: ResultadoGasto) -> str:
+    g = resultado.lectura.gasto
+    if g is None:
+        return _e(resultado.lectura.respuesta or "No entendí eso como un gasto.")
+
+    lineas = [f"<b>${g.monto:,.2f}</b> · {_e(g.concepto)}"]
+    lineas.append(_e(f"{g.categoria} · {g.ciudad} · {g.forma_pago} · {g.fecha}"))
+    etiquetas = [g.tipo] + (["deducible"] if g.deducible else [])
+    lineas.append(f"<i>{_e(' · '.join(etiquetas))}</i>")
+    if g.notas:
+        lineas.append(_e(g.notas))
+    if g.falta:
+        lineas.append(f"⚠️ Lo supuse yo: {_e('; '.join(g.falta))}")
+    if resultado.airtable_url:
+        lineas.append(f'<a href="{_e(resultado.airtable_url)}">Ver en Airtable</a>')
+    return "\n".join(lineas)
+
+
 def _archivo_del_mensaje(mensaje: dict) -> dict | None:
     """Telegram manda el video en distintos campos segun como se comparta."""
     for clave in ("video", "video_note", "animation"):
@@ -170,9 +207,12 @@ class Bot:
             self.tg.enviar(chat_id, AYUDA)
             return
 
+        voz = _voz_del_mensaje(mensaje)
         archivo = _archivo_del_mensaje(mensaje)
         try:
-            if archivo:
+            if voz:
+                self._procesar_voz(chat_id, voz)
+            elif archivo:
                 self._procesar_archivo(chat_id, mensaje, archivo)
             elif texto:
                 self._procesar_texto(chat_id, texto)
@@ -184,13 +224,41 @@ class Bot:
             log.exception("fallo procesando el update")
             self.tg.enviar(chat_id, f"Se atoró: {exc}")
 
+    def _procesar_voz(self, chat_id: int, voz: dict) -> None:
+        tam_mb = (voz.get("file_size") or 0) / 1_048_576
+        if tam_mb > LIMITE_ARCHIVO_MB:
+            self.tg.enviar(chat_id, f"Ese audio pesa {tam_mb:.0f} MB y solo puedo bajar "
+                                    f"{LIMITE_ARCHIVO_MB} MB.")
+            return
+        with tempfile.TemporaryDirectory(dir=self.cfg.work_dir) as tmp:
+            ruta = self.tg.descargar(voz["file_id"], Path(tmp))
+            texto = self.procesador.transcribir_archivo(ruta)
+
+        if not texto.strip():
+            self.tg.enviar(chat_id, "No se escuchó nada en esa nota de voz.")
+            return
+        # Enseñar la transcripción no es adorno: con dictado tienes que poder ver
+        # qué entendió antes de confiar en el registro que generó.
+        self.tg.enviar(chat_id, f"🎙 «{texto.strip()}»")
+        self._procesar_texto(chat_id, texto)
+
     def _procesar_texto(self, chat_id: int, texto: str) -> None:
         url = extraer_url(texto)
-        if not url:
-            self.tg.enviar(chat_id, AYUDA)
+        if url:
+            self.tg.enviar(chat_id, "Viendo el video… esto toma entre 20 y 60 segundos.")
+            self._responder(chat_id, self.procesador.desde_url(url))
             return
-        self.tg.enviar(chat_id, "Viendo el video… esto toma entre 20 y 60 segundos.")
-        self._responder(chat_id, self.procesador.desde_url(url))
+        self._procesar_gasto(chat_id, texto)
+
+    def _procesar_gasto(self, chat_id: int, texto: str) -> None:
+        if not self.cfg.can_gastos:
+            self.tg.enviar(chat_id, "Para registrar gastos me falta AIRTABLE_BASE_GASTOS en el .env.")
+            return
+        resultado = self.procesador.gasto_desde_texto(texto)
+        if resultado.lectura.es_gasto:
+            self.tg.enviar(chat_id, formatear_gasto(resultado), html_mode=True)
+        else:
+            self.tg.enviar(chat_id, formatear_gasto(resultado) + "\n\n" + AYUDA)
 
     def _procesar_archivo(self, chat_id: int, mensaje: dict, archivo: dict) -> None:
         tam_mb = (archivo.get("file_size") or 0) / 1_048_576

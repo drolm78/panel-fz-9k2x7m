@@ -45,6 +45,12 @@ def extraer_audio(video: Path, workdir: Path) -> Path:
     return salida
 
 
+# Whisper acepta ogg directo, asi que una nota de voz de Telegram no necesita
+# pasar por ffmpeg: se manda tal cual llega.
+_TIPOS = {".mp3": "audio/mpeg", ".oga": "audio/ogg", ".ogg": "audio/ogg",
+          ".m4a": "audio/mp4", ".wav": "audio/wav", ".webm": "audio/webm"}
+
+
 def transcribir(audio: Path, base_url: str, api_key: str, modelo: str, timeout: float = 300.0) -> str:
     if audio.stat().st_size > LIMITE_BYTES:
         raise TranscripcionError(
@@ -54,7 +60,7 @@ def transcribir(audio: Path, base_url: str, api_key: str, modelo: str, timeout: 
         r = requests.post(
             f"{base_url}/audio/transcriptions",
             headers={"Authorization": f"Bearer {api_key}"},
-            files={"file": (audio.name, fh, "audio/mpeg")},
+            files={"file": (audio.name, fh, _TIPOS.get(audio.suffix.lower(), "audio/mpeg"))},
             data={"model": modelo, "response_format": "text"},
             timeout=timeout,
         )

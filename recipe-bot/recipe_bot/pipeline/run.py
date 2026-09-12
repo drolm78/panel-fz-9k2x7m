@@ -17,9 +17,10 @@ from pathlib import Path
 import anthropic
 
 from ..config import Config
-from ..models import Receta, necesita_escalar
+from ..gastos import leer as leer_gasto
+from ..models import LecturaGasto, Receta, necesita_escalar
 from ..resolvers import Resolver, ResolverError, Source, construir, elegir, source_desde_archivo
-from ..storage.airtable import guardar
+from ..storage.airtable import guardar, guardar_gasto
 from . import audio as audio_mod
 from . import frames as frames_mod
 from .extract import extraer
@@ -27,6 +28,12 @@ from .extract import extraer
 log = logging.getLogger(__name__)
 
 MIN_TEXTO_UTIL = 40
+
+
+@dataclass
+class ResultadoGasto:
+    lectura: LecturaGasto
+    airtable_url: str | None
 
 
 @dataclass
@@ -58,6 +65,32 @@ class Procesador:
             if ruta.resolve() != destino.resolve():
                 shutil.copy2(ruta, destino)
             return self._procesar(source_desde_archivo(destino, caption), wd, None)
+
+    def gasto_desde_texto(self, texto: str) -> ResultadoGasto:
+        """Lee un gasto dictado o escrito. Si no era un gasto, no guarda nada."""
+        lectura = leer_gasto(self.client, self.cfg.anthropic_model, texto)
+        if not lectura.es_gasto or lectura.gasto is None:
+            return ResultadoGasto(lectura=lectura, airtable_url=None)
+        url = guardar_gasto(
+            lectura.gasto,
+            self.cfg.airtable_token,
+            self.cfg.airtable_base_gastos,
+            self.cfg.airtable_tabla_gastos,
+        )
+        return ResultadoGasto(lectura=lectura, airtable_url=url)
+
+    def transcribir_archivo(self, audio: Path) -> str:
+        """Nota de voz -> texto. Whisper acepta el .oga de Telegram tal cual."""
+        if not self.cfg.can_transcribe:
+            raise ResolverError(
+                "Para las notas de voz necesito TRANSCRIBE_API_KEY en el .env."
+            )
+        return audio_mod.transcribir(
+            audio,
+            self.cfg.transcribe_base_url,
+            self.cfg.transcribe_api_key,
+            self.cfg.transcribe_model,
+        )
 
     # -- nucleo ------------------------------------------------------------
 

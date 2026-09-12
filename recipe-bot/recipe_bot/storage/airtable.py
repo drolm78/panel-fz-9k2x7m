@@ -11,7 +11,7 @@ from datetime import date
 
 import requests
 
-from ..models import Receta
+from ..models import Gasto, Receta
 from ..resolvers import Source
 
 log = logging.getLogger(__name__)
@@ -107,3 +107,51 @@ def guardar(receta: Receta, source: Source, token: str, base_id: str, tabla: str
 
     record_id = r.json().get("id", "")
     return f"https://airtable.com/{base_id}/{record_id}"
+
+
+# --- Gastos ---------------------------------------------------------------
+
+CAMPOS_GASTO = {
+    "concepto": "Concepto",
+    "fecha": "Fecha",
+    "monto": "Monto",
+    "categoria": "Categoría",
+    "ciudad": "Ciudad",
+    "tipo": "Tipo de gasto",
+    "forma_pago": "Forma de pago",
+    "deducible": "¿Deducible?",
+    "notas": "Notas",
+}
+
+
+def construir_campos_gasto(gasto: Gasto) -> dict:
+    notas = gasto.notas or ""
+    if gasto.falta:
+        supuesto = "; ".join(gasto.falta)
+        notas = (notas + "\n\n" if notas else "") + f"Supuesto por el bot: {supuesto}"
+
+    return {
+        CAMPOS_GASTO["concepto"]: gasto.concepto,
+        CAMPOS_GASTO["fecha"]: gasto.fecha,
+        CAMPOS_GASTO["monto"]: gasto.monto,
+        CAMPOS_GASTO["categoria"]: gasto.categoria,
+        CAMPOS_GASTO["ciudad"]: gasto.ciudad,
+        CAMPOS_GASTO["tipo"]: gasto.tipo,
+        CAMPOS_GASTO["forma_pago"]: gasto.forma_pago,
+        CAMPOS_GASTO["deducible"]: gasto.deducible,
+        CAMPOS_GASTO["notas"]: notas,
+    }
+
+
+def guardar_gasto(gasto: Gasto, token: str, base_id: str, tabla: str) -> str:
+    r = requests.post(
+        f"{API}/{base_id}/{requests.utils.quote(tabla, safe='')}",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        # Sin typecast: las categorias van forzadas por el esquema del modelo, y
+        # no queremos que el bot cree opciones nuevas en un campo de seleccion.
+        json={"fields": construir_campos_gasto(gasto)},
+        timeout=30,
+    )
+    if r.status_code != 200:
+        raise AirtableError(f"Airtable respondió {r.status_code}: {r.text[:400]}")
+    return f"https://airtable.com/{base_id}/{r.json().get('id','')}"

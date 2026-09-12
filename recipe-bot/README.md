@@ -1,12 +1,23 @@
-# Recetas desde video → Airtable
+# Bot de Telegram → Airtable
 
-Bot de Telegram: le compartes un video de cocina de **YouTube, TikTok, Instagram o
-Facebook** y te regresa la receta transcrita, estructurada y ya guardada como
-registro en Airtable.
+Hace dos cosas, las dos terminan en Airtable:
+
+**Recetas de cocina.** Le compartes un video de **YouTube, TikTok, Instagram o
+Facebook** y te regresa la receta transcrita y estructurada.
 
 ```
-Compartes el video  →  se extrae texto + audio + cuadros  →  Claude arma la receta  →  Airtable
+Compartes el video  →  texto + audio + cuadros  →  Claude arma la receta  →  Airtable
 ```
+
+**Gastos dictados.** Le dictas o escribes un gasto y lo registra clasificado.
+
+```
+"350 de gasolina, tarjeta, ayer"  →  Claude lo clasifica  →  tabla Gastos
+```
+
+Los gastos aterrizan en Airtable, no en el xlsx de Atenea: así revisas antes de
+que entren a la contabilidad, y el efectivo —que ningún estado de cuenta ve—
+queda capturado en el momento. De ahí los absorbe la conciliación mensual.
 
 ## Por qué un bot de Telegram
 
@@ -76,17 +87,39 @@ en el navegador.
 
 Abre el chat de tu bot y:
 
-- **Pega una liga** de YouTube, TikTok, Instagram o Facebook.
+- **Pega una liga** de YouTube, TikTok, Instagram o Facebook → receta.
 - **O comparte el video directo** desde la app (Compartir → Telegram → tu bot).
+- **O dicta/escribe un gasto** → registro clasificado.
 
-Contesta en 20-60 segundos con la receta formateada y la liga al registro.
+Cualquier mensaje que traiga una liga se trata como video; cualquier otro, como
+gasto. Las **notas de voz** funcionan para las dos cosas: se transcriben y se
+rutean igual que si las hubieras escrito.
+
+Con dictado, el bot siempre te enseña primero lo que entendió (`🎙 «...»`) antes
+de mostrarte el registro. No es adorno: es cómo detectas que Whisper oyó
+"trescientos" donde dijiste "trece".
 
 Si Instagram o Facebook rechazan el link, el bot te lo dice y te pide el archivo.
 Para saltarte eso de raíz, puedes poner un `COOKIES_FILE` con cookies de sesión
 en formato Netscape — funciona, pero se rompe cada tantas semanas y va contra los
 términos de servicio de esas plataformas. Mandar el archivo es más estable.
 
-## La tabla en Airtable
+## Los gastos
+
+El bot clasifica contra las opciones que **ya existen** en tu tabla: 12
+categorías, 3 ciudades, 4 formas de pago. Esas listas viven como tipos `Literal`
+en `models.py`, así que **el modelo no puede inventar una categoría nueva** — no
+es una instrucción del prompt que pueda ignorar, es el esquema que valida su
+respuesta. Y se guarda sin `typecast`, para que el bot tampoco pueda crear
+opciones nuevas en Airtable por accidente.
+
+Lo que no le dictaste (ciudad, forma de pago) se supone con un default sensato y
+queda anotado en `Notas` del registro, para que después sepas qué revisar.
+
+Si agregas una categoría en Airtable, agrégala también a `CategoriaGasto` en
+`recipe_bot/models.py`.
+
+## La tabla de recetas en Airtable
 
 `scripts/setup_airtable.py` crea estos campos:
 
