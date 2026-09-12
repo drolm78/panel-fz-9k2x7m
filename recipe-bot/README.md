@@ -232,6 +232,33 @@ pregunta de más cuesta diez segundos; ese error cuesta mucho más.
 La nota se crea con `Atención = Receta`, igual que en tu flujo actual. Si
 prefieres otra etiqueta, está en `CAMPOS_RECETA` en `storage/airtable.py`.
 
+## Que arranque solo
+
+Corriéndolo a mano (`python -m recipe_bot`), el bot vive mientras esa ventana de
+Terminal siga abierta. Si reinicias la Mac, muere.
+
+Para que arranque solo al iniciar sesión y se levante si se cae:
+
+```bash
+bash scripts/instalar-servicio.sh
+```
+
+Registra un LaunchAgent de macOS. Después:
+
+```bash
+launchctl list | grep recetas      # ¿está corriendo?
+tail -f logs/bot.log               # qué está haciendo
+launchctl unload -w ~/Library/LaunchAgents/com.folmedo.recetas-bot.plist   # detenerlo
+```
+
+Dos detalles que el script resuelve y que a mano se olvidan: `launchd` arranca
+con un `PATH` mínimo, así que hay que declararle dónde está `ffmpeg` o los
+videos fallan aunque esté instalado; y el `.env` se lee relativo a la carpeta de
+trabajo, que también hay que declarar.
+
+Arranca al **iniciar sesión**, no al encender: si reinicias, el bot revive
+cuando entres a tu usuario.
+
 ## ⚠️ Dónde NO ponerlo
 
 **No lo dejes en `~/Documents` ni en ninguna carpeta sincronizada** (iCloud,

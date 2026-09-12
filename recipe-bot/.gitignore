@@ -5,3 +5,4 @@ __pycache__/
 work/
 cookies.txt
 .pytest_cache/
+logs/
