@@ -124,3 +124,68 @@ def test_reconoce_la_nota_de_voz_y_el_audio():
 def test_un_video_no_se_confunde_con_una_nota_de_voz():
     assert _voz_del_mensaje({"video": {"file_id": "v"}}) is None
     assert _archivo_del_mensaje({"voice": {"file_id": "a"}}) is None
+
+
+# --- recetas médicas -------------------------------------------------------
+
+from datetime import date as _date  # noqa: E402
+
+from recipe_bot.bot import formatear_receta  # noqa: E402
+from recipe_bot.consulta import CatalogoClinico, Paciente  # noqa: E402
+from recipe_bot.models import LecturaReceta  # noqa: E402
+from recipe_bot.pipeline.run import ResultadoReceta  # noqa: E402
+from recipe_bot.storage.airtable import resolver_receta  # noqa: E402
+
+_MED = "Tradea LP Tabletas 20 mg. Caja con 30 tabletas. (Metilfenidato liberación prolongada)"
+_CAT = CatalogoClinico(
+    pacientes=(Paciente("Juan Pérez López", "recJUAN"), Paciente("Ana Gómez Ruiz", "recANA")),
+    medicamentos=(_MED,), presentaciones=("Una caja con 30 tabletas",),
+)
+
+
+def _receta(guardada=True, **kw):
+    base = dict(
+        es_receta=True, paciente="Juan Pérez", medicamento=_MED,
+        indicacion="Tomar una tableta por la mañana durante 30 días.",
+        presentacion="Una caja con 30 tabletas", repetir_dias=None,
+        repetir_meses=None, respuesta=None,
+    )
+    base.update(kw)
+    lec = LecturaReceta(**base)
+    res = resolver_receta(lec, _CAT, _date(2026, 9, 12))
+    return ResultadoReceta(
+        lectura=lec, resuelta=res,
+        airtable_url="https://airtable.com/appC/recN" if guardada and not res.ambigua else None,
+    )
+
+
+def test_la_receta_muestra_paciente_medicamento_e_indicacion():
+    texto = formatear_receta(_receta())
+    assert "<b>Juan Pérez López</b>" in texto
+    assert "Tradea LP Tabletas 20 mg" in texto
+    assert "Tomar una tableta por la mañana" in texto
+    assert "Nota del 2026-09-12" in texto
+
+
+def test_avisa_la_fecha_de_la_siguiente_receta():
+    assert "Siguiente receta: <b>2026-10-12</b>" in formatear_receta(_receta(repetir_meses=1))
+
+
+def test_cuando_el_paciente_es_ambiguo_lo_dice_y_no_guarda():
+    texto = formatear_receta(_receta(paciente="Rodrigo Villanueva"))
+    assert "No guardé nada" in texto
+    assert "¿Es alguno de estos?" in texto
+    assert "Juan Pérez López" in texto  # los candidatos, para que elija
+    assert "Ver la nota" not in texto   # sin liga: no hay registro
+
+
+def test_un_medicamento_fuera_del_catalogo_se_reporta():
+    texto = formatear_receta(_receta(medicamento="Tradea 200 mg"))
+    assert "No están en tu catálogo" in texto
+    assert "sin medicamento" in texto
+
+
+def test_escapa_html_de_los_nombres():
+    r = _receta()
+    r.resuelta.lectura.indicacion = "Tomar <1> tableta & media"
+    assert "&lt;1&gt; tableta &amp; media" in formatear_receta(r)

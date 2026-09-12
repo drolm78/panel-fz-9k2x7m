@@ -106,3 +106,50 @@ class LecturaMovimiento(BaseModel):
         description="Si es_movimiento es False, una frase breve diciendo qué entendiste. "
         "null si sí era un movimiento."
     )
+
+
+# --- Consulta: receta médica ----------------------------------------------
+
+
+class LecturaReceta(BaseModel):
+    es_receta: bool = Field(
+        description="True solo si el mensaje pide registrar una receta para un paciente."
+    )
+    paciente: str = Field(
+        description="El nombre del paciente tal como se dictó, sin corregir. "
+        "Cadena vacía si no se dijo ninguno."
+    )
+    medicamento: str = Field(
+        description="Copiado EXACTAMENTE de la lista de medicamentos válidos, "
+        "carácter por carácter. Cadena vacía si ninguno corresponde."
+    )
+    indicacion: str = Field(
+        description="Cómo tomarlo, en las palabras del doctor. "
+        "Ej: 'Tomar una tableta por la mañana durante 30 días'. Cadena vacía si no se dijo."
+    )
+    presentacion: str = Field(
+        description="Copiada EXACTAMENTE de la lista de presentaciones válidas. "
+        "Cadena vacía si ninguna corresponde."
+    )
+    repetir_dias: int | None = Field(
+        description="Si pidió otra receta 'dentro de N días', el número N. null si no."
+    )
+    repetir_meses: int | None = Field(
+        description="Si pidió otra receta 'dentro de N meses', el número N. "
+        "'dentro de un mes' es 1. null si no."
+    )
+    respuesta: str | None = Field(
+        description="Si es_receta es False, una frase breve diciendo qué entendiste. null si sí lo era."
+    )
+
+
+Intencion = Literal["video", "gasto", "receta", "otro"]
+
+
+class Clasificacion(BaseModel):
+    intencion: Intencion = Field(
+        description="'gasto' si registra un movimiento de dinero con monto; "
+        "'receta' si pide registrar una receta médica para un paciente; "
+        "'video' si pide procesar un video de cocina; 'otro' en cualquier otro caso."
+    )
+    porque: str = Field(description="Una frase corta explicando por qué.")

@@ -17,11 +17,17 @@ from pathlib import Path
 import anthropic
 
 from ..config import Config
+from .. import router
 from ..atenea import Catalogo, cargar_catalogo
 from ..atenea import leer as leer_movimiento
-from ..models import LecturaMovimiento, Receta, necesita_escalar
+from ..consulta import CatalogoClinico
+from ..consulta import cargar_catalogo as cargar_catalogo_clinico
+from ..consulta import leer as leer_receta
+from ..models import Intencion, LecturaMovimiento, LecturaReceta, Receta, necesita_escalar
 from ..resolvers import Resolver, ResolverError, Source, construir, elegir, source_desde_archivo
-from ..storage.airtable import MovimientoResuelto, guardar, guardar_movimiento, resolver
+from ..storage.airtable import (MovimientoResuelto, RecetaResuelta, guardar,
+                                guardar_movimiento, guardar_receta, resolver,
+                                resolver_receta)
 from . import audio as audio_mod
 from . import frames as frames_mod
 from .extract import extraer
@@ -39,6 +45,13 @@ class ResultadoMovimiento:
 
 
 @dataclass
+class ResultadoReceta:
+    lectura: LecturaReceta
+    resuelta: RecetaResuelta | None
+    airtable_url: str | None
+
+
+@dataclass
 class Resultado:
     receta: Receta
     source: Source
@@ -52,6 +65,7 @@ class Procesador:
         self.client = client or anthropic.Anthropic()
         self.resolvers: list[Resolver] = construir(cfg.cookies_file)
         self._catalogo: Catalogo | None = None
+        self._catalogo_clinico: CatalogoClinico | None = None
         cfg.work_dir.mkdir(parents=True, exist_ok=True)
 
     # -- entradas ----------------------------------------------------------
@@ -79,6 +93,40 @@ class Procesador:
                 self.cfg.airtable_tabla_sumandos,
             )
         return self._catalogo
+
+    def clasificar(self, texto: str) -> Intencion:
+        return router.clasificar(self.client, self.cfg.anthropic_model, texto)
+
+    def catalogo_clinico(self) -> CatalogoClinico:
+        """3166 pacientes: se traen una vez y se guardan una hora."""
+        if self._catalogo_clinico is None or not self._catalogo_clinico.vigente:
+            self._catalogo_clinico = cargar_catalogo_clinico(
+                self.cfg.airtable_token,
+                self.cfg.airtable_base_consulta,
+                self.cfg.airtable_tabla_notas,
+                self.cfg.airtable_tabla_pacientes,
+                "Nombre del paciente",
+            )
+        return self._catalogo_clinico
+
+    def receta_desde_texto(self, texto: str) -> ResultadoReceta:
+        """Si el paciente no queda claro, NO escribe nada: devuelve los candidatos."""
+        catalogo = self.catalogo_clinico()
+        lectura = leer_receta(self.client, self.cfg.anthropic_model, texto, catalogo)
+        if not lectura.es_receta:
+            return ResultadoReceta(lectura=lectura, resuelta=None, airtable_url=None)
+
+        resuelta = resolver_receta(lectura, catalogo)
+        if resuelta.ambigua:
+            return ResultadoReceta(lectura=lectura, resuelta=resuelta, airtable_url=None)
+
+        url = guardar_receta(
+            resuelta,
+            self.cfg.airtable_token,
+            self.cfg.airtable_base_consulta,
+            self.cfg.airtable_tabla_notas,
+        )
+        return ResultadoReceta(lectura=lectura, resuelta=resuelta, airtable_url=url)
 
     def movimiento_desde_texto(self, texto: str) -> ResultadoMovimiento:
         """Lee un movimiento dictado. Si no era un movimiento, no guarda nada."""

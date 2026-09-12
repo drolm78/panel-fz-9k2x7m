@@ -61,6 +61,10 @@ class Config:
     airtable_base_atenea: str
     airtable_tabla_master: str
     airtable_tabla_sumandos: str
+    # Base "2026 Extraespecial": expedientes y recetas.
+    airtable_base_consulta: str
+    airtable_tabla_notas: str
+    airtable_tabla_pacientes: str
 
     transcribe_base_url: str
     transcribe_api_key: str
@@ -87,6 +91,9 @@ class Config:
             airtable_base_atenea=os.environ.get("AIRTABLE_BASE_ATENEA", "").strip(),
             airtable_tabla_master=os.environ.get("AIRTABLE_TABLA_MASTER", "Master").strip(),
             airtable_tabla_sumandos=os.environ.get("AIRTABLE_TABLA_SUMANDOS", "Sumandos").strip(),
+            airtable_base_consulta=os.environ.get("AIRTABLE_BASE_CONSULTA", "").strip(),
+            airtable_tabla_notas=os.environ.get("AIRTABLE_TABLA_NOTAS", "Notas").strip(),
+            airtable_tabla_pacientes=os.environ.get("AIRTABLE_TABLA_PACIENTES", "Pacientes").strip(),
             transcribe_base_url=os.environ.get(
                 "TRANSCRIBE_BASE_URL", "https://api.openai.com/v1"
             ).strip().rstrip("/"),
@@ -105,3 +112,7 @@ class Config:
     @property
     def can_atenea(self) -> bool:
         return bool(self.airtable_base_atenea)
+
+    @property
+    def can_consulta(self) -> bool:
+        return bool(self.airtable_base_consulta)

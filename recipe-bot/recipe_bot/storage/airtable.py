@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 import requests
 
-from ..models import Movimiento, Receta
+from ..consulta import Candidato, CatalogoClinico, Paciente, sumar_meses
+from ..models import LecturaReceta, Movimiento, Receta
 from ..resolvers import Source
 
 log = logging.getLogger(__name__)
@@ -201,3 +202,105 @@ def guardar_movimiento(resuelto: MovimientoResuelto, token: str, base_id: str, t
     if r.status_code != 200:
         raise AirtableError(f"Airtable respondió {r.status_code}: {r.text[:400]}")
     return f"https://airtable.com/{base_id}/{r.json().get('id','')}"
+
+
+# --- Recetas médicas (2026 Extraespecial / Notas) --------------------------
+
+CAMPOS_RECETA = {
+    "paciente": "Paciente",
+    "fecha": "Fecha-Principal",
+    "atencion": "Atención",
+    "medicamento": "Medicamento 1",
+    "indicacion": "Indicacion de medicamento 1",
+    "presentacion": "Presentación de medicamento 1",
+    "repeticion": "Date2",
+}
+
+
+@dataclass
+class RecetaResuelta:
+    lectura: LecturaReceta
+    paciente: Paciente | None
+    candidatos: list[Candidato]
+    medicamento: str | None
+    presentacion: str | None
+    fecha: date
+    date2: date | None
+
+    @property
+    def ambigua(self) -> bool:
+        """Sin paciente claro no se escribe nada: se pregunta."""
+        return self.paciente is None
+
+    @property
+    def sin_resolver(self) -> list[str]:
+        faltantes = []
+        if self.lectura.medicamento and self.medicamento is None:
+            faltantes.append(f"medicamento «{self.lectura.medicamento}»")
+        if self.lectura.presentacion and self.presentacion is None:
+            faltantes.append(f"presentación «{self.lectura.presentacion}»")
+        return faltantes
+
+
+def resolver_receta(
+    lectura: LecturaReceta, catalogo: CatalogoClinico, hoy: date | None = None
+) -> RecetaResuelta:
+    from ..consulta import hay_ganador
+
+    hoy = hoy or date.today()
+    candidatos = catalogo.buscar_pacientes(lectura.paciente)
+
+    date2: date | None = None
+    if lectura.repetir_meses:
+        date2 = sumar_meses(hoy, lectura.repetir_meses)
+    elif lectura.repetir_dias:
+        date2 = hoy + timedelta(days=lectura.repetir_dias)
+
+    return RecetaResuelta(
+        lectura=lectura,
+        paciente=hay_ganador(candidatos),
+        candidatos=candidatos,
+        medicamento=(
+            catalogo.resolver_opcion(lectura.medicamento, catalogo.medicamentos)
+            if lectura.medicamento else None
+        ),
+        presentacion=(
+            catalogo.resolver_opcion(lectura.presentacion, catalogo.presentaciones)
+            if lectura.presentacion else None
+        ),
+        fecha=hoy,
+        date2=date2,
+    )
+
+
+def construir_campos_receta(r: RecetaResuelta) -> dict:
+    if r.paciente is None:
+        raise AirtableError("No se puede escribir una receta sin paciente resuelto.")
+
+    campos: dict = {
+        CAMPOS_RECETA["paciente"]: [r.paciente.record_id],
+        CAMPOS_RECETA["fecha"]: r.fecha.isoformat(),
+        CAMPOS_RECETA["atencion"]: ["Receta"],
+    }
+    if r.medicamento:
+        campos[CAMPOS_RECETA["medicamento"]] = r.medicamento
+    if r.lectura.indicacion:
+        campos[CAMPOS_RECETA["indicacion"]] = r.lectura.indicacion
+    if r.presentacion:
+        campos[CAMPOS_RECETA["presentacion"]] = r.presentacion
+    if r.date2:
+        campos[CAMPOS_RECETA["repeticion"]] = r.date2.isoformat()
+    return campos
+
+
+def guardar_receta(r: RecetaResuelta, token: str, base_id: str, tabla: str) -> str:
+    resp = requests.post(
+        f"{API}/{base_id}/{requests.utils.quote(tabla, safe='')}",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        # Sin typecast: jamas crear un medicamento ni una presentacion nuevos.
+        json={"fields": construir_campos_receta(r)},
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        raise AirtableError(f"Airtable respondió {resp.status_code}: {resp.text[:400]}")
+    return f"https://airtable.com/{base_id}/{resp.json().get('id','')}"

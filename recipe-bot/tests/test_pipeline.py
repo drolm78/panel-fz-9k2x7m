@@ -63,6 +63,8 @@ def cfg(tmp_path):
         airtable_token="a", airtable_base_id="appX", airtable_table="Recetas",
         airtable_base_atenea="appA", airtable_tabla_master="Master",
         airtable_tabla_sumandos="Sumandos",
+        airtable_base_consulta="appC", airtable_tabla_notas="Notas",
+        airtable_tabla_pacientes="Pacientes",
         transcribe_base_url="https://x/v1", transcribe_api_key="", transcribe_model="whisper-1",
         work_dir=tmp_path, cookies_file=None, max_frames=16, frame_width=640,
     )

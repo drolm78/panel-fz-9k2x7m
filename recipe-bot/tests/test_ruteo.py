@@ -31,6 +31,8 @@ def cfg(tmp_path):
         airtable_token="a", airtable_base_id="appX", airtable_table="Recetas",
         airtable_base_atenea="appA", airtable_tabla_master="Master",
         airtable_tabla_sumandos="Sumandos",
+        airtable_base_consulta="appC", airtable_tabla_notas="Notas",
+        airtable_tabla_pacientes="Pacientes",
         transcribe_base_url="https://x/v1", transcribe_api_key="k", transcribe_model="w",
         work_dir=tmp_path, cookies_file=None, max_frames=16, frame_width=640,
     )
@@ -53,6 +55,15 @@ class ProcesadorFalso:
     def __init__(self, *a, **k):
         self.llamadas = []
         self.transcripcion = "350 de gasolina"
+        self.intencion = "gasto"
+
+    def clasificar(self, texto):
+        self.llamadas.append(("clasificar", texto))
+        return self.intencion
+
+    def receta_desde_texto(self, texto):
+        self.llamadas.append(("receta", texto))
+        return "RESULTADO_RECETA"
 
     def desde_url(self, url):
         self.llamadas.append(("video", url))
@@ -81,9 +92,10 @@ def _mensaje(**kw):
 
 
 def test_un_mensaje_con_liga_va_al_camino_de_video(armado):
+    # Una liga no pasa por el clasificador: es inequivoca y ahorra una llamada.
     armado._manejar(_mensaje(text="https://youtu.be/abc"))
     assert ("video", "https://youtu.be/abc") in armado.procesador.llamadas
-    assert not any(c[0] == "gasto" for c in armado.procesador.llamadas)
+    assert not any(c[0] in ("gasto", "clasificar") for c in armado.procesador.llamadas)
 
 
 def test_un_mensaje_sin_liga_va_al_camino_de_gasto(armado):
@@ -102,7 +114,23 @@ def test_el_gasto_se_responde_formateado_y_sin_errores(armado):
 def test_una_nota_de_voz_se_transcribe_y_luego_se_rutea(armado):
     armado._manejar(_mensaje(voice={"file_id": "v1", "file_size": 1000}))
     tipos = [c[0] for c in armado.procesador.llamadas]
-    assert tipos == ["transcribir", "gasto"]
+    assert tipos == ["transcribir", "clasificar", "gasto"]
+
+
+def test_una_receta_dictada_va_al_camino_clinico_no_al_de_gastos(armado, monkeypatch):
+    monkeypatch.setattr(bot_mod, "formatear_receta", lambda r: f"receta:{r}")
+    armado.procesador.intencion = "receta"
+    armado._manejar(_mensaje(text="recétale Tradea 20 a Juan Pérez"))
+    tipos = [c[0] for c in armado.procesador.llamadas]
+    assert tipos == ["clasificar", "receta"]
+    assert "gasto" not in tipos
+
+
+def test_un_mensaje_sin_intencion_clara_contesta_la_ayuda(armado):
+    armado.procesador.intencion = "otro"
+    armado._manejar(_mensaje(text="buenos días"))
+    assert [c[0] for c in armado.procesador.llamadas] == ["clasificar"]
+    assert "GASTOS" in armado.tg.enviados[-1]
 
 
 def test_la_transcripcion_se_muestra_antes_de_actuar(armado):
@@ -141,5 +169,6 @@ def test_sin_base_de_gastos_configurada_lo_dice_en_vez_de_fallar(cfg, monkeypatc
     sin_gastos = Config(**{**cfg.__dict__, "airtable_base_atenea": ""})
     b = bot_mod.Bot(sin_gastos)
     b._manejar(_mensaje(text="350 de gasolina"))
-    assert b.procesador.llamadas == []
+    # Clasifica, pero no intenta guardar: avisa qué falta en vez de tronar.
+    assert [c[0] for c in b.procesador.llamadas] == ["clasificar"]
     assert "AIRTABLE_BASE_ATENEA" in b.tg.enviados[0]

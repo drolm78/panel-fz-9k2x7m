@@ -16,7 +16,7 @@ import requests
 
 from .config import Config
 from .models import Receta
-from .pipeline.run import Procesador, Resultado, ResultadoMovimiento
+from .pipeline.run import Procesador, Resultado, ResultadoMovimiento, ResultadoReceta
 from .resolvers import ResolverError, extraer_url
 
 log = logging.getLogger(__name__)
@@ -36,6 +36,11 @@ AYUDA = (
     "  \"1200 en Office Depot del tóner, Amex Platinum\"\n"
     "Elijo lugar, categoría y cuenta de tus catálogos de Atenea; lo que no "
     "reconozca lo dejo vacío y te aviso.\n"
+    "RECETAS MÉDICAS (a Notas de 2026 Extraespecial)\n"
+    "Dicta el paciente y el medicamento:\n"
+    "  \"Recétale Tradea LP 20 a Juan Pérez, una tableta en la mañana por 30 días\"\n"
+    "  \"...y otra dentro de un mes\"  → llena Date2\n"
+    "Si el nombre no es claro te muestro los parecidos y NO escribo nada.\n\n"
     "Las notas de voz sirven igual que el texto.\n\n"
     "Comandos: /start, /help"
 )
@@ -127,6 +132,40 @@ def formatear(resultado: Resultado) -> str:
         lineas.append(f"\n⚠️ Quedó incompleto: {_e('; '.join(r.falta))}")
 
     lineas.append(f'\n<a href="{_e(resultado.airtable_url)}">Ver en Airtable</a>')
+    return "\n".join(lineas)
+
+
+def formatear_receta(resultado: ResultadoReceta) -> str:
+    r = resultado.resuelta
+    if r is None:
+        return _e(resultado.lectura.respuesta or "No entendí eso como una receta.")
+
+    if r.ambigua:
+        # Escribir en el expediente equivocado es el peor error de este flujo, y
+        # ademas es silencioso. Ante la duda se pregunta y no se escribe nada.
+        lineas = [f"No estoy seguro de a quién te refieres con "
+                  f"<b>{_e(resultado.lectura.paciente)}</b>. No guardé nada."]
+        if r.candidatos:
+            lineas.append("\n¿Es alguno de estos?")
+            for c in r.candidatos:
+                lineas.append(f"• {_e(c.paciente.nombre)}  <i>({c.puntaje:.0%})</i>")
+            lineas.append("\nDíctamelo otra vez con el nombre completo.")
+        else:
+            lineas.append("No encontré ningún paciente parecido.")
+        return "\n".join(lineas)
+
+    lineas = [f"<b>{_e(r.paciente.nombre)}</b>", _e(f"Nota del {r.fecha.isoformat()}")]
+    lineas.append(f"\n<b>{_e(r.medicamento or 'sin medicamento')}</b>")
+    if r.lectura.indicacion:
+        lineas.append(_e(r.lectura.indicacion))
+    if r.presentacion:
+        lineas.append(f"<i>{_e(r.presentacion)}</i>")
+    if r.date2:
+        lineas.append(f"\n📅 Siguiente receta: <b>{r.date2.isoformat()}</b>")
+    if r.sin_resolver:
+        lineas.append(f"\n⚠️ No están en tu catálogo: {_e('; '.join(r.sin_resolver))}")
+    if resultado.airtable_url:
+        lineas.append(f'\n<a href="{_e(resultado.airtable_url)}">Ver la nota</a>')
     return "\n".join(lineas)
 
 
@@ -258,7 +297,21 @@ class Bot:
             self.tg.enviar(chat_id, "Viendo el video… esto toma entre 20 y 60 segundos.")
             self._responder(chat_id, self.procesador.desde_url(url))
             return
-        self._procesar_movimiento(chat_id, texto)
+        intencion = self.procesador.clasificar(texto)
+        if intencion == "receta":
+            self._procesar_receta(chat_id, texto)
+        elif intencion == "gasto":
+            self._procesar_movimiento(chat_id, texto)
+        else:
+            self.tg.enviar(chat_id, AYUDA)
+
+    def _procesar_receta(self, chat_id: int, texto: str) -> None:
+        if not self.cfg.can_consulta:
+            self.tg.enviar(chat_id, "Para las recetas me falta AIRTABLE_BASE_CONSULTA en el .env.")
+            return
+        self.tg.enviar(chat_id, "Buscando el expediente…")
+        self.tg.enviar(chat_id, formatear_receta(self.procesador.receta_desde_texto(texto)),
+                       html_mode=True)
 
     def _procesar_movimiento(self, chat_id: int, texto: str) -> None:
         if not self.cfg.can_atenea:

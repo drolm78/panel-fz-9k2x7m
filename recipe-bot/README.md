@@ -19,6 +19,19 @@ Compartes el video  →  texto + audio + cuadros  →  Claude arma la receta  �
 Captura el efectivo, que ningún estado de cuenta ve, en el momento en que lo
 gastas — que es el único momento en que existe.
 
+**Recetas médicas.** Dictas paciente y medicamento, y crea la nota en `Notas` de
+**2026 Extraespecial**, ligada al expediente.
+
+```
+"Recétale Tradea LP 20 a Juan Pérez, una tableta en la mañana
+ por 30 días, y otra dentro de un mes"     →  Notas + Date2
+```
+
+Un mensaje con liga va a video sin preguntar. Los demás pasan por un
+clasificador que decide entre gasto, receta y ninguno de los dos — la palabra
+"receta" es de cocina o de consulta según el contexto, y eso no se resuelve con
+palabras clave.
+
 ## Por qué un bot de Telegram
 
 El share sheet del iPhone deja mandar un Reel o un TikTok a Telegram **como
@@ -187,6 +200,37 @@ dominio ni webhook.
 - **Instagram y Facebook por link dependen de que el post sea público.** Es la
   parte frágil por diseño ajeno, no por diseño propio.
 - Los macros son estimaciones, no análisis de laboratorio.
+
+## Las recetas: por qué a veces no guarda nada
+
+Tres catálogos, tres estrategias distintas, y ninguna es capricho:
+
+| | Tamaño | Cómo se elige |
+|---|---|---|
+| Medicamentos | ~280 | Van en el prompt; el modelo copia la cadena exacta |
+| Presentaciones | ~319 | Igual |
+| Pacientes | **3,166** | No caben: búsqueda local por parecido |
+
+Los medicamentos van al prompt porque elegir entre *"Tradea LP Tabletas 20 mg…"*
+y *"Tradea Tabletas 10 mg…"* requiere entender lo dictado, no comparar letras.
+Después se verifica que la cadena devuelta exista de verdad; si no, el campo se
+queda vacío y se avisa. Nunca se crea un medicamento nuevo.
+
+Los pacientes se buscan localmente comparando sin acentos ni mayúsculas, con un
+refuerzo por palabras completas: Whisper suele acertar los apellidos y fallar el
+nombre de pila, o al revés.
+
+**Y aquí está la decisión que más importa:** si no hay un candidato claramente
+mejor que el resto —puntaje bajo, o dos pacientes casi empatados— **el bot no
+escribe nada**. Te muestra los parecidos con su porcentaje y te pide que lo
+dictes de nuevo.
+
+Escribir una receta en el expediente equivocado es el peor error posible de este
+flujo, y además es silencioso: nadie se entera hasta que alguien lo lee. Una
+pregunta de más cuesta diez segundos; ese error cuesta mucho más.
+
+La nota se crea con `Atención = Receta`, igual que en tu flujo actual. Si
+prefieres otra etiqueta, está en `CAMPOS_RECETA` en `storage/airtable.py`.
 
 ## ⚠️ Dónde NO ponerlo
 
