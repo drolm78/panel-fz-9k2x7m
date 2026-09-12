@@ -7,11 +7,12 @@ poder probarlo sin red.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import date
 
 import requests
 
-from ..models import Gasto, Receta
+from ..models import Movimiento, Receta
 from ..resolvers import Source
 
 log = logging.getLogger(__name__)
@@ -109,47 +110,92 @@ def guardar(receta: Receta, source: Source, token: str, base_id: str, tabla: str
     return f"https://airtable.com/{base_id}/{record_id}"
 
 
-# --- Gastos ---------------------------------------------------------------
+# --- Movimientos (Atenea / Master) ----------------------------------------
 
-CAMPOS_GASTO = {
-    "concepto": "Concepto",
+CAMPOS_MOVIMIENTO = {
     "fecha": "Fecha",
-    "monto": "Monto",
-    "categoria": "Categoría",
-    "ciudad": "Ciudad",
-    "tipo": "Tipo de gasto",
     "forma_pago": "Forma de pago",
-    "deducible": "¿Deducible?",
-    "notas": "Notas",
+    "monto": "Monto",
+    "lugar": "Lugar",
+    "categoria": "Categoría",
+    "detalles": "Detalles",
 }
 
 
-def construir_campos_gasto(gasto: Gasto) -> dict:
-    notas = gasto.notas or ""
-    if gasto.falta:
-        supuesto = "; ".join(gasto.falta)
-        notas = (notas + "\n\n" if notas else "") + f"Supuesto por el bot: {supuesto}"
+@dataclass
+class MovimientoResuelto:
+    """El movimiento ya confrontado contra el catálogo real de Airtable."""
 
-    return {
-        CAMPOS_GASTO["concepto"]: gasto.concepto,
-        CAMPOS_GASTO["fecha"]: gasto.fecha,
-        CAMPOS_GASTO["monto"]: gasto.monto,
-        CAMPOS_GASTO["categoria"]: gasto.categoria,
-        CAMPOS_GASTO["ciudad"]: gasto.ciudad,
-        CAMPOS_GASTO["tipo"]: gasto.tipo,
-        CAMPOS_GASTO["forma_pago"]: gasto.forma_pago,
-        CAMPOS_GASTO["deducible"]: gasto.deducible,
-        CAMPOS_GASTO["notas"]: notas,
+    movimiento: Movimiento
+    forma_pago_id: str | None
+    lugar: str | None
+    categoria: str | None
+
+    @property
+    def sin_resolver(self) -> list[str]:
+        faltantes = []
+        if self.movimiento.forma_pago and self.forma_pago_id is None:
+            faltantes.append(f"forma de pago «{self.movimiento.forma_pago}»")
+        if self.movimiento.lugar and self.lugar is None:
+            faltantes.append(f"lugar «{self.movimiento.lugar}»")
+        if self.movimiento.categoria and self.categoria is None:
+            faltantes.append(f"categoría «{self.movimiento.categoria}»")
+        return faltantes
+
+
+def resolver(movimiento: Movimiento, catalogo) -> MovimientoResuelto:
+    """Confronta lo que dijo el modelo contra lo que de verdad existe en Atenea.
+
+    Un campo que no empata se deja vacío a propósito: es preferible un hueco que
+    llenas tú a una categoría equivocada enterrada en tu contabilidad.
+    """
+    return MovimientoResuelto(
+        movimiento=movimiento,
+        forma_pago_id=(
+            catalogo.resolver_forma_pago(movimiento.forma_pago) if movimiento.forma_pago else None
+        ),
+        lugar=(
+            catalogo.resolver_opcion(movimiento.lugar, catalogo.lugares)
+            if movimiento.lugar else None
+        ),
+        categoria=(
+            catalogo.resolver_opcion(movimiento.categoria, catalogo.categorias)
+            if movimiento.categoria else None
+        ),
+    )
+
+
+def construir_campos_movimiento(resuelto: MovimientoResuelto) -> dict:
+    m = resuelto.movimiento
+    detalles = m.detalles or ""
+
+    avisos = list(resuelto.sin_resolver)
+    if avisos:
+        nota = "No están en tu catálogo: " + "; ".join(avisos)
+        detalles = (detalles + "\n\n" if detalles else "") + nota
+
+    campos: dict = {
+        CAMPOS_MOVIMIENTO["fecha"]: m.fecha,
+        CAMPOS_MOVIMIENTO["monto"]: m.monto,
+        CAMPOS_MOVIMIENTO["detalles"]: detalles,
     }
+    # Los campos que no se resolvieron se omiten: Airtable rechaza un id de
+    # vinculo invalido, y una opcion inexistente no se puede escribir sin typecast.
+    if resuelto.forma_pago_id:
+        campos[CAMPOS_MOVIMIENTO["forma_pago"]] = [resuelto.forma_pago_id]
+    if resuelto.lugar:
+        campos[CAMPOS_MOVIMIENTO["lugar"]] = resuelto.lugar
+    if resuelto.categoria:
+        campos[CAMPOS_MOVIMIENTO["categoria"]] = resuelto.categoria
+    return campos
 
 
-def guardar_gasto(gasto: Gasto, token: str, base_id: str, tabla: str) -> str:
+def guardar_movimiento(resuelto: MovimientoResuelto, token: str, base_id: str, tabla: str) -> str:
     r = requests.post(
         f"{API}/{base_id}/{requests.utils.quote(tabla, safe='')}",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        # Sin typecast: las categorias van forzadas por el esquema del modelo, y
-        # no queremos que el bot cree opciones nuevas en un campo de seleccion.
-        json={"fields": construir_campos_gasto(gasto)},
+        # Sin typecast: el bot no debe crear lugares, categorias ni cuentas nuevas.
+        json={"fields": construir_campos_movimiento(resuelto)},
         timeout=30,
     )
     if r.status_code != 200:

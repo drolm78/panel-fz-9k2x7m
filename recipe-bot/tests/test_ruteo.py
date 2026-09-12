@@ -2,7 +2,25 @@
 import pytest
 
 from recipe_bot import bot as bot_mod
+from recipe_bot.atenea import Catalogo
 from recipe_bot.config import Config
+from recipe_bot.models import LecturaMovimiento, Movimiento
+from recipe_bot.pipeline.run import ResultadoMovimiento
+from recipe_bot.storage.airtable import resolver
+
+CATALOGO = Catalogo(formas_pago={"Inbursa": "recINB"}, lugares=("Gasolinera",),
+                    categorias=("Carro",))
+
+
+def _resultado_movimiento():
+    m = Movimiento(fecha="2026-09-11", monto=350.0, forma_pago="Inbursa",
+                   lugar="Gasolinera", categoria="Carro", detalles=None,
+                   confianza="alta", falta=[])
+    return ResultadoMovimiento(
+        lectura=LecturaMovimiento(es_movimiento=True, movimiento=m, respuesta=None),
+        resuelto=resolver(m, CATALOGO),
+        airtable_url="https://airtable.com/appA/recM",
+    )
 
 
 @pytest.fixture
@@ -11,7 +29,8 @@ def cfg(tmp_path):
         telegram_token="t", allowed_users=frozenset({7}),
         anthropic_model="claude-opus-5",
         airtable_token="a", airtable_base_id="appX", airtable_table="Recetas",
-        airtable_base_gastos="appG", airtable_tabla_gastos="Gastos",
+        airtable_base_atenea="appA", airtable_tabla_master="Master",
+        airtable_tabla_sumandos="Sumandos",
         transcribe_base_url="https://x/v1", transcribe_api_key="k", transcribe_model="w",
         work_dir=tmp_path, cookies_file=None, max_frames=16, frame_width=640,
     )
@@ -39,9 +58,9 @@ class ProcesadorFalso:
         self.llamadas.append(("video", url))
         return "RESULTADO_VIDEO"
 
-    def gasto_desde_texto(self, texto):
+    def movimiento_desde_texto(self, texto):
         self.llamadas.append(("gasto", texto))
-        return "RESULTADO_GASTO"
+        return _resultado_movimiento()
 
     def transcribir_archivo(self, ruta):
         self.llamadas.append(("transcribir", ruta.name))
@@ -53,7 +72,6 @@ def armado(cfg, monkeypatch):
     monkeypatch.setattr(bot_mod, "Telegram", TelegramFalso)
     monkeypatch.setattr(bot_mod, "Procesador", ProcesadorFalso)
     monkeypatch.setattr(bot_mod, "formatear", lambda r: f"receta:{r}")
-    monkeypatch.setattr(bot_mod, "formatear_gasto", lambda r: f"gasto:{r}")
     b = bot_mod.Bot(cfg)
     return b
 
@@ -72,6 +90,13 @@ def test_un_mensaje_sin_liga_va_al_camino_de_gasto(armado):
     armado._manejar(_mensaje(text="350 de gasolina, tarjeta, ayer"))
     assert ("gasto", "350 de gasolina, tarjeta, ayer") in armado.procesador.llamadas
     assert not any(c[0] == "video" for c in armado.procesador.llamadas)
+
+
+def test_el_gasto_se_responde_formateado_y_sin_errores(armado):
+    armado._manejar(_mensaje(text="350 de gasolina"))
+    respuesta = armado.tg.enviados[-1]
+    assert "$350.00" in respuesta and "Gasolinera" in respuesta
+    assert not any(t.startswith("Se atoró") for t in armado.tg.enviados)
 
 
 def test_una_nota_de_voz_se_transcribe_y_luego_se_rutea(armado):
@@ -113,8 +138,8 @@ def test_un_usuario_ajeno_se_ignora_por_completo(armado):
 def test_sin_base_de_gastos_configurada_lo_dice_en_vez_de_fallar(cfg, monkeypatch, tmp_path):
     monkeypatch.setattr(bot_mod, "Telegram", TelegramFalso)
     monkeypatch.setattr(bot_mod, "Procesador", ProcesadorFalso)
-    sin_gastos = Config(**{**cfg.__dict__, "airtable_base_gastos": ""})
+    sin_gastos = Config(**{**cfg.__dict__, "airtable_base_atenea": ""})
     b = bot_mod.Bot(sin_gastos)
     b._manejar(_mensaje(text="350 de gasolina"))
     assert b.procesador.llamadas == []
-    assert "AIRTABLE_BASE_GASTOS" in b.tg.enviados[0]
+    assert "AIRTABLE_BASE_ATENEA" in b.tg.enviados[0]

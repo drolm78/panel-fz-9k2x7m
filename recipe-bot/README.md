@@ -9,15 +9,15 @@ Facebook** y te regresa la receta transcrita y estructurada.
 Compartes el video  →  texto + audio + cuadros  →  Claude arma la receta  →  Airtable
 ```
 
-**Gastos dictados.** Le dictas o escribes un gasto y lo registra clasificado.
+**Gastos dictados.** Le dictas o escribes un movimiento y lo registra en la tabla
+`Master` de tu base **Atenea**, clasificado contra tus propios catálogos.
 
 ```
-"350 de gasolina, tarjeta, ayer"  →  Claude lo clasifica  →  tabla Gastos
+"350 de gasolina en la Gasolinera, Inbursa, ayer"  →  Atenea / Master
 ```
 
-Los gastos aterrizan en Airtable, no en el xlsx de Atenea: así revisas antes de
-que entren a la contabilidad, y el efectivo —que ningún estado de cuenta ve—
-queda capturado en el momento. De ahí los absorbe la conciliación mensual.
+Captura el efectivo, que ningún estado de cuenta ve, en el momento en que lo
+gastas — que es el único momento en que existe.
 
 ## Por qué un bot de Telegram
 
@@ -104,20 +104,32 @@ Para saltarte eso de raíz, puedes poner un `COOKIES_FILE` con cookies de sesió
 en formato Netscape — funciona, pero se rompe cada tantas semanas y va contra los
 términos de servicio de esas plataformas. Mandar el archivo es más estable.
 
-## Los gastos
+## Los gastos: cómo no ensuciar Atenea
 
-El bot clasifica contra las opciones que **ya existen** en tu tabla: 12
-categorías, 3 ciudades, 4 formas de pago. Esas listas viven como tipos `Literal`
-en `models.py`, así que **el modelo no puede inventar una categoría nueva** — no
-es una instrucción del prompt que pueda ignorar, es el esquema que valida su
-respuesta. Y se guarda sin `typecast`, para que el bot tampoco pueda crear
-opciones nuevas en Airtable por accidente.
+Llena seis campos de `Master`: `Fecha`, `Forma de pago`, `Monto`, `Lugar`,
+`Categoría` y `Detalles`.
 
-Lo que no le dictaste (ciudad, forma de pago) se supone con un default sensato y
-queda anotado en `Notas` del registro, para que después sepas qué revisar.
+El problema real no es extraer el gasto — es no empeorar el catálogo. `Lugar`
+tiene ~190 opciones y `Categoría` ~54, ya con variantes acumuladas del mismo
+concepto (`WALMART` / `Walmart`, `Súper` / `S´uper` / `Super`). Un bot con
+`typecast` habilitado agregaría una variante más en cada dictado.
 
-Si agregas una categoría en Airtable, agrégala también a `CategoriaGasto` en
-`recipe_bot/models.py`.
+Tres decisiones evitan eso:
+
+1. **Los catálogos se leen de Airtable en caliente**, no van escritos en el
+   código. Agregas un lugar allá y el bot lo sabe en menos de 10 minutos, sin
+   tocar nada aquí.
+2. **Nunca se manda `typecast`.** El bot es incapaz de crear una opción o una
+   forma de pago nueva, aunque quisiera.
+3. **Lo que no empata se deja vacío, no se fuerza.** Si dictas un lugar que no
+   está en tu lista, el movimiento se guarda igual con lo demás, el campo queda
+   en blanco, y el aviso se escribe en `Detalles` y se te dice en Telegram. Un
+   hueco que tú llenas es mejor que una categoría equivocada enterrada en tu
+   contabilidad.
+
+`Forma de pago` no es un desplegable sino un vínculo a la tabla `Sumandos`, así
+que el nombre dictado se resuelve al ID del registro antes de escribir —
+comparando sin acentos ni mayúsculas, para que "inbursa" encuentre "Inbursa".
 
 ## La tabla de recetas en Airtable
 
@@ -175,6 +187,24 @@ dominio ni webhook.
 - **Instagram y Facebook por link dependen de que el post sea público.** Es la
   parte frágil por diseño ajeno, no por diseño propio.
 - Los macros son estimaciones, no análisis de laboratorio.
+
+## ⚠️ Dónde NO ponerlo
+
+**No lo dejes en `~/Documents` ni en ninguna carpeta sincronizada** (iCloud,
+Dropbox, Google Drive).
+
+Se probó en carne propia: en `~/Documents` de una Mac, importar los módulos del
+bot tardaba **419 segundos**; los mismos archivos en `~/` tardan **2.6**. El bot
+no se veía roto — arrancaba, pero tardaba entre dos y siete minutos en empezar a
+escuchar Telegram, así que parecía muerto.
+
+Si el arranque se siente lento, mide antes de suponer:
+
+```bash
+python -u -c "import time; t=time.time(); import recipe_bot.bot; print(f'{time.time()-t:.1f}s')"
+```
+
+Arriba de 5 segundos, el problema es dónde vive la carpeta.
 
 ## Desarrollo
 

@@ -16,7 +16,7 @@ import requests
 
 from .config import Config
 from .models import Receta
-from .pipeline.run import Procesador, Resultado, ResultadoGasto
+from .pipeline.run import Procesador, Resultado, ResultadoMovimiento
 from .resolvers import ResolverError, extraer_url
 
 log = logging.getLogger(__name__)
@@ -30,10 +30,12 @@ AYUDA = (
     "Mándame la liga de un video de YouTube, TikTok, Instagram o Facebook y te "
     "regreso la receta ya guardada en Airtable. Si el link no jala (Instagram y "
     "Facebook a veces bloquean), comparte el archivo de video directo: funciona igual.\n\n"
-    "GASTOS\n"
-    "Dicta o escribe un gasto y lo registro:\n"
-    "  \"350 de gasolina, tarjeta Banorte, ayer\"\n"
-    "  \"1200 del tóner de la impresora del consultorio\"\n"
+    "GASTOS (a Atenea / Master)\n"
+    "Dicta o escribe un movimiento y lo registro:\n"
+    "  \"350 de gasolina en la Gasolinera, Inbursa, ayer\"\n"
+    "  \"1200 en Office Depot del tóner, Amex Platinum\"\n"
+    "Elijo lugar, categoría y cuenta de tus catálogos de Atenea; lo que no "
+    "reconozca lo dejo vacío y te aviso.\n"
     "Las notas de voz sirven igual que el texto.\n\n"
     "Comandos: /start, /help"
 )
@@ -141,21 +143,29 @@ def _voz_del_mensaje(mensaje: dict) -> dict | None:
     return None
 
 
-def formatear_gasto(resultado: ResultadoGasto) -> str:
-    g = resultado.lectura.gasto
-    if g is None:
-        return _e(resultado.lectura.respuesta or "No entendí eso como un gasto.")
+def formatear_movimiento(resultado: ResultadoMovimiento) -> str:
+    m = resultado.lectura.movimiento
+    if m is None or resultado.resuelto is None:
+        return _e(resultado.lectura.respuesta or "No entendí eso como un movimiento.")
 
-    lineas = [f"<b>${g.monto:,.2f}</b> · {_e(g.concepto)}"]
-    lineas.append(_e(f"{g.categoria} · {g.ciudad} · {g.forma_pago} · {g.fecha}"))
-    etiquetas = [g.tipo] + (["deducible"] if g.deducible else [])
-    lineas.append(f"<i>{_e(' · '.join(etiquetas))}</i>")
-    if g.notas:
-        lineas.append(_e(g.notas))
-    if g.falta:
-        lineas.append(f"⚠️ Lo supuse yo: {_e('; '.join(g.falta))}")
+    r = resultado.resuelto
+    lineas = [f"<b>${m.monto:,.2f}</b> · {_e(r.lugar or 'sin lugar')}"]
+    partes = [r.categoria or "sin categoría",
+              m.forma_pago if r.forma_pago_id else "sin cuenta",
+              m.fecha]
+    lineas.append(_e(" · ".join(partes)))
+    if m.detalles:
+        lineas.append(_e(m.detalles))
+
+    # Lo que no empató con el catálogo se avisa: el registro queda con huecos
+    # a propósito, y hay que poder verlos sin abrir Airtable.
+    if r.sin_resolver:
+        lineas.append(f"⚠️ No están en tu catálogo: {_e('; '.join(r.sin_resolver))}")
+    elif m.falta:
+        lineas.append(f"⚠️ Lo supuse yo: {_e('; '.join(m.falta))}")
+
     if resultado.airtable_url:
-        lineas.append(f'<a href="{_e(resultado.airtable_url)}">Ver en Airtable</a>')
+        lineas.append(f'<a href="{_e(resultado.airtable_url)}">Ver en Master</a>')
     return "\n".join(lineas)
 
 
@@ -248,17 +258,17 @@ class Bot:
             self.tg.enviar(chat_id, "Viendo el video… esto toma entre 20 y 60 segundos.")
             self._responder(chat_id, self.procesador.desde_url(url))
             return
-        self._procesar_gasto(chat_id, texto)
+        self._procesar_movimiento(chat_id, texto)
 
-    def _procesar_gasto(self, chat_id: int, texto: str) -> None:
-        if not self.cfg.can_gastos:
-            self.tg.enviar(chat_id, "Para registrar gastos me falta AIRTABLE_BASE_GASTOS en el .env.")
+    def _procesar_movimiento(self, chat_id: int, texto: str) -> None:
+        if not self.cfg.can_atenea:
+            self.tg.enviar(chat_id, "Para registrar gastos me falta AIRTABLE_BASE_ATENEA en el .env.")
             return
-        resultado = self.procesador.gasto_desde_texto(texto)
-        if resultado.lectura.es_gasto:
-            self.tg.enviar(chat_id, formatear_gasto(resultado), html_mode=True)
+        resultado = self.procesador.movimiento_desde_texto(texto)
+        if resultado.lectura.es_movimiento:
+            self.tg.enviar(chat_id, formatear_movimiento(resultado), html_mode=True)
         else:
-            self.tg.enviar(chat_id, formatear_gasto(resultado) + "\n\n" + AYUDA)
+            self.tg.enviar(chat_id, formatear_movimiento(resultado) + "\n\n" + AYUDA)
 
     def _procesar_archivo(self, chat_id: int, mensaje: dict, archivo: dict) -> None:
         tam_mb = (archivo.get("file_size") or 0) / 1_048_576

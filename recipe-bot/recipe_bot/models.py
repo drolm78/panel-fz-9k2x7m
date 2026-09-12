@@ -60,61 +60,49 @@ def necesita_escalar(receta: Receta) -> bool:
     )
 
 
-# --- Gastos ---------------------------------------------------------------
+# --- Movimientos de Atenea -------------------------------------------------
 #
-# Las categorías van como Literal, no como texto libre en el prompt: así el
-# esquema mismo le impide al modelo inventar una categoría que no exista en
-# Airtable. Si mañana agregas una opción allá, se agrega aquí y ya.
-
-CategoriaGasto = Literal[
-    "Renta consultorio",
-    "Servicios (luz/agua/internet)",
-    "Insumos y papelería",
-    "Equipo y mobiliario",
-    "Software y suscripciones",
-    "Publicidad y marketing",
-    "Sueldos y honorarios",
-    "Impuestos y contador",
-    "Cursos y educación continua",
-    "Transporte y viajes",
-    "Comida",
-    "Otros",
-]
-CiudadGasto = Literal["La Paz", "CDMX", "Ambas / General"]
-TipoGasto = Literal["Fijo", "Variable"]
-FormaPago = Literal["Efectivo", "Transferencia", "Tarjeta débito", "Tarjeta crédito"]
+# Aqui NO se usan Literal como en las recetas: las opciones de Lugar, Categoria
+# y Forma de pago viven en Airtable, cambian, y son ~190 / ~54 / 27. Se validan
+# contra el catalogo leido en caliente (ver atenea.py), no contra el esquema.
 
 
-class Gasto(BaseModel):
-    concepto: str = Field(description="Descripción breve del gasto, 2-5 palabras.")
-    monto: float = Field(description="Monto en pesos mexicanos, solo el número.")
-    fecha: str = Field(description="Fecha del gasto en formato YYYY-MM-DD.")
-    categoria: CategoriaGasto
-    ciudad: CiudadGasto
-    tipo: TipoGasto = Field(
-        description="'Fijo' si es un gasto recurrente (renta, sueldos, suscripciones); "
-        "'Variable' para todo lo demás."
+class Movimiento(BaseModel):
+    fecha: str = Field(description="Fecha del movimiento en formato YYYY-MM-DD.")
+    monto: float = Field(description="Monto en pesos mexicanos, positivo, solo el número.")
+    forma_pago: str = Field(
+        description="Cuenta o tarjeta, copiada exactamente de la lista de formas de pago "
+        "válidas. Cadena vacía si lo dictado no corresponde a ninguna."
     )
-    forma_pago: FormaPago
-    deducible: bool = Field(
-        description="True si es un gasto del consultorio que normalmente se deduce."
+    lugar: str = Field(
+        description="Copiado exactamente de la lista de lugares válidos. "
+        "Cadena vacía si lo dictado no corresponde a ninguno."
     )
-    notas: str | None = Field(description="Detalle que no cupo en el concepto. null si no hay.")
+    categoria: str = Field(
+        description="Copiada exactamente de la lista de categorías válidas. "
+        "Cadena vacía si lo dictado no corresponde a ninguna."
+    )
+    detalles: str | None = Field(
+        description="Texto libre: qué se compró, para quién. null si no hay nada que agregar."
+    )
     confianza: Confianza
     falta: list[str] = Field(
-        description="Campos que tuviste que suponer porque no se dijeron. Lista vacía si todo venía."
+        description="Campos que quedaron vacíos o que tuviste que suponer. "
+        "Lista vacía si todo venía en lo dictado."
     )
 
 
-class LecturaGasto(BaseModel):
+class LecturaMovimiento(BaseModel):
     """Clasificación y extracción en una sola llamada, para no pagar dos."""
 
-    es_gasto: bool = Field(
-        description="True solo si el mensaje registra un gasto con un monto. "
-        "Una pregunta, un saludo o una nota suelta no son gastos."
+    es_movimiento: bool = Field(
+        description="True solo si el mensaje registra un movimiento con un monto. "
+        "Una pregunta, un saludo o una nota suelta no lo son."
     )
-    gasto: Gasto | None = Field(description="El gasto extraído. null si es_gasto es False.")
+    movimiento: Movimiento | None = Field(
+        description="El movimiento extraído. null si es_movimiento es False."
+    )
     respuesta: str | None = Field(
-        description="Si es_gasto es False, una frase breve diciendo qué entendiste "
-        "y qué te faltó. null si sí era un gasto."
+        description="Si es_movimiento es False, una frase breve diciendo qué entendiste. "
+        "null si sí era un movimiento."
     )

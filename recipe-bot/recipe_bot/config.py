@@ -57,9 +57,10 @@ class Config:
     airtable_token: str
     airtable_base_id: str
     airtable_table: str
-    # Base "2026 Extraespecial": ahi vive la tabla Gastos que ya tenias.
-    airtable_base_gastos: str
-    airtable_tabla_gastos: str
+    # Base "Atenea": ahi vive la tabla Master, tu contabilidad.
+    airtable_base_atenea: str
+    airtable_tabla_master: str
+    airtable_tabla_sumandos: str
 
     transcribe_base_url: str
     transcribe_api_key: str
@@ -83,8 +84,9 @@ class Config:
             airtable_token=_req("AIRTABLE_TOKEN"),
             airtable_base_id=_req("AIRTABLE_BASE_ID"),
             airtable_table=os.environ.get("AIRTABLE_TABLE", "Recetas").strip(),
-            airtable_base_gastos=os.environ.get("AIRTABLE_BASE_GASTOS", "").strip(),
-            airtable_tabla_gastos=os.environ.get("AIRTABLE_TABLA_GASTOS", "Gastos").strip(),
+            airtable_base_atenea=os.environ.get("AIRTABLE_BASE_ATENEA", "").strip(),
+            airtable_tabla_master=os.environ.get("AIRTABLE_TABLA_MASTER", "Master").strip(),
+            airtable_tabla_sumandos=os.environ.get("AIRTABLE_TABLA_SUMANDOS", "Sumandos").strip(),
             transcribe_base_url=os.environ.get(
                 "TRANSCRIBE_BASE_URL", "https://api.openai.com/v1"
             ).strip().rstrip("/"),
@@ -101,5 +103,5 @@ class Config:
         return bool(self.transcribe_api_key)
 
     @property
-    def can_gastos(self) -> bool:
-        return bool(self.airtable_base_gastos)
+    def can_atenea(self) -> bool:
+        return bool(self.airtable_base_atenea)

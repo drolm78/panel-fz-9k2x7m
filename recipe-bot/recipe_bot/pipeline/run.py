@@ -17,10 +17,11 @@ from pathlib import Path
 import anthropic
 
 from ..config import Config
-from ..gastos import leer as leer_gasto
-from ..models import LecturaGasto, Receta, necesita_escalar
+from ..atenea import Catalogo, cargar_catalogo
+from ..atenea import leer as leer_movimiento
+from ..models import LecturaMovimiento, Receta, necesita_escalar
 from ..resolvers import Resolver, ResolverError, Source, construir, elegir, source_desde_archivo
-from ..storage.airtable import guardar, guardar_gasto
+from ..storage.airtable import MovimientoResuelto, guardar, guardar_movimiento, resolver
 from . import audio as audio_mod
 from . import frames as frames_mod
 from .extract import extraer
@@ -31,8 +32,9 @@ MIN_TEXTO_UTIL = 40
 
 
 @dataclass
-class ResultadoGasto:
-    lectura: LecturaGasto
+class ResultadoMovimiento:
+    lectura: LecturaMovimiento
+    resuelto: MovimientoResuelto | None
     airtable_url: str | None
 
 
@@ -49,6 +51,7 @@ class Procesador:
         self.cfg = cfg
         self.client = client or anthropic.Anthropic()
         self.resolvers: list[Resolver] = construir(cfg.cookies_file)
+        self._catalogo: Catalogo | None = None
         cfg.work_dir.mkdir(parents=True, exist_ok=True)
 
     # -- entradas ----------------------------------------------------------
@@ -66,18 +69,32 @@ class Procesador:
                 shutil.copy2(ruta, destino)
             return self._procesar(source_desde_archivo(destino, caption), wd, None)
 
-    def gasto_desde_texto(self, texto: str) -> ResultadoGasto:
-        """Lee un gasto dictado o escrito. Si no era un gasto, no guarda nada."""
-        lectura = leer_gasto(self.client, self.cfg.anthropic_model, texto)
-        if not lectura.es_gasto or lectura.gasto is None:
-            return ResultadoGasto(lectura=lectura, airtable_url=None)
-        url = guardar_gasto(
-            lectura.gasto,
+    def catalogo_atenea(self) -> Catalogo:
+        """Catálogo vivo de Airtable, cacheado 10 min para no pedirlo en cada gasto."""
+        if self._catalogo is None or not self._catalogo.vigente:
+            self._catalogo = cargar_catalogo(
+                self.cfg.airtable_token,
+                self.cfg.airtable_base_atenea,
+                self.cfg.airtable_tabla_master,
+                self.cfg.airtable_tabla_sumandos,
+            )
+        return self._catalogo
+
+    def movimiento_desde_texto(self, texto: str) -> ResultadoMovimiento:
+        """Lee un movimiento dictado. Si no era un movimiento, no guarda nada."""
+        catalogo = self.catalogo_atenea()
+        lectura = leer_movimiento(self.client, self.cfg.anthropic_model, texto, catalogo)
+        if not lectura.es_movimiento or lectura.movimiento is None:
+            return ResultadoMovimiento(lectura=lectura, resuelto=None, airtable_url=None)
+
+        resuelto = resolver(lectura.movimiento, catalogo)
+        url = guardar_movimiento(
+            resuelto,
             self.cfg.airtable_token,
-            self.cfg.airtable_base_gastos,
-            self.cfg.airtable_tabla_gastos,
+            self.cfg.airtable_base_atenea,
+            self.cfg.airtable_tabla_master,
         )
-        return ResultadoGasto(lectura=lectura, airtable_url=url)
+        return ResultadoMovimiento(lectura=lectura, resuelto=resuelto, airtable_url=url)
 
     def transcribir_archivo(self, audio: Path) -> str:
         """Nota de voz -> texto. Whisper acepta el .oga de Telegram tal cual."""
